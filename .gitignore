@@ -2,5 +2,6 @@ __pycache__/
 .venv/
 venv/
 *.pyc
+.env
+*.db
 weekend_report.txt
-weekend.db
