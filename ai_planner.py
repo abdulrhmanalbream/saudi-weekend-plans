@@ -57,15 +57,15 @@ class GeminiPlanner:
                       'opens': p['opens'], 'closes': p['closes']} for p in places]
         return (
             'You plan weekend trips in Saudi Arabia. Make a realistic day-by-day plan.\n'
-            'Trip: %s\n' % json.dumps({k: trip.get(k) for k in ('home_city', 'destinations', 'stays', 'start_date',
+            'Trip: %s\n' % json.dumps({k: trip.get(k) for k in ('home_city', 'end_city', 'destinations', 'stays', 'start_date',
                                                                   'end_date', 'people', 'budget', 'transport')}) +
             'Dates: %s\n' % ', '.join(trip_days(trip['start_date'], trip['end_date'])) +
             'Interests: %s. Pace: %s.\n' % (', '.join(interests) or 'anything', pace) +
             'Travel between cities:\n' + ('\n'.join(legs) or 'one city only') + '\n'
             'Rules:\n'
             '- Use ONLY places from the catalogue, by their id.\n'
-            '- The group starts at home in %s on the first day and goes back home at the end of the last day.\n'
-            % trip['home_city'] +
+            '- The group starts at home in %s on the first day and must reach %s at the end of the last day.\n'
+            % (trip['home_city'], trip.get('end_city') or trip['home_city']) +
             '- Visit each place inside its opening hours. Leave 20-40 minutes between places in a city.\n'
             '- When the plan changes city, leave the travel time above between the two activities.\n'
             '- The group has a free place to stay (house or family) in: %s. A night there costs nothing.\n'

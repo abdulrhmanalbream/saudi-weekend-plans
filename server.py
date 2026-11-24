@@ -77,7 +77,11 @@ def check_trip(form):
     if len(name) > 60:
         return None, 'The trip name must be 60 characters or fewer.'
     if home not in CITIES:
-        return None, 'Choose the home city from the list.'
+        return None, 'Choose the start city from the list.'
+    # the trip may end in another city; empty means it ends where it started
+    end_city = form.get('end_city', '').strip() or home
+    if end_city not in CITIES:
+        return None, 'Choose the end city from the list.'
     if not destinations:
         return None, 'Choose at least one destination city.'
     for city in destinations:
@@ -115,7 +119,8 @@ def check_trip(form):
     return {'name': name, 'home_city': home, 'destinations': ', '.join(destinations),
             'start_date': start.isoformat(), 'end_date': end.isoformat(), 'people': people,
             'budget': budget, 'transport': transport, 'notes': notes,
-            'stays': ', '.join(c for c in stays if c != home), 'car_kmpl': car_kmpl, 'fuel': fuel}, None
+            'stays': ', '.join(c for c in stays if c != home), 'car_kmpl': car_kmpl, 'fuel': fuel,
+            'end_city': end_city}, None
 
 
 def check_activity(form, trip):

@@ -117,6 +117,9 @@ class TestTrips(ServerTest):
         self.assertEqual(self.new_trip(headers, car_kmpl='2').status_code, 400)
         self.assertEqual(self.new_trip(headers, fuel='98').status_code, 400)
         self.assertEqual(self.new_trip(headers, stays='Paris').status_code, 400)
+        self.assertEqual(self.new_trip(headers, end_city='Paris').status_code, 400)
+        ended = self.new_trip(headers, destinations='Madinah', end_city='Madinah').json
+        self.assertEqual(ended['trip']['end_city'], 'Madinah')
 
     def test_saved_places(self):
         headers = self.login()

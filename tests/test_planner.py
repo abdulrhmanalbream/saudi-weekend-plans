@@ -151,6 +151,18 @@ class TestStaysAndCars(unittest.TestCase):
         result = TripPlanner(trip(), [activity(5, '2026-12-03', '10:00')], homes=homes).analyse()
         self.assertEqual(result['home']['name'], 'Home (Riyadh)')
 
+    def test_trip_can_end_in_another_city(self):
+        # start at home in Jeddah, end at a saved home in Madinah
+        homes = {'Madinah': {'name': 'Madinah house', 'kind': 'Home', 'lat': 24.48, 'lng': 39.58}}
+        t = trip(home_city='Jeddah', end_city='Madinah', destinations='Jeddah, Madinah', transport='car',
+                 start_date='2026-12-03', end_date='2026-12-04')
+        acts = [activity(9, '2026-12-03', '16:00'), activity(19, '2026-12-04', '12:00')]
+        result = TripPlanner(t, acts, homes=homes).analyse()
+        self.assertEqual(result['end']['name'], 'Madinah house')
+        self.assertLess(result['return_leg']['km'], 30)
+        local = local_plan(t, CATALOGUE, ['Heritage'], 'normal', homes)
+        self.assertEqual(CATALOGUE[local[-1]['place_id'] - 1]['city'], 'Madinah')
+
     def test_economical_car_uses_less_fuel(self):
         r, d = CITIES['Riyadh'], CITIES['Jeddah']
         thirsty = TripPlanner(trip(car_kmpl=8), []).leg(r['lat'], r['lng'], d['lat'], d['lng'])

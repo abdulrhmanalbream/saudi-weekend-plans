@@ -80,9 +80,18 @@ class TripPlanner:
         self.cars = math.ceil(self.people / PEOPLE_PER_CAR)
         self.rooms = math.ceil(self.people / PEOPLE_PER_ROOM)
         self.allow_flights = trip['transport'] == 'flight'
+        # the trip starts at home in the start city (home_city) and ends in the end city
         self.home = self.point(trip['home_city'], home_only=True)
         if not self.home['saved']:
             self.home['name'] = 'Home (' + trip['home_city'] + ')'
+        self.end_city = trip.get('end_city') or trip['home_city']
+        if self.end_city == trip['home_city']:
+            self.end = self.home
+        else:
+            # any saved place in the end city (home, family or friends), or its centre
+            self.end = self.point(self.end_city)
+            if not self.end['saved']:
+                self.end['name'] = self.end_city + ' (end)'
         # the cities where the group has a house or family, so a night there costs nothing
         self.stays = {c.strip() for c in (trip.get('stays') or '').split(',') if c.strip()}
 
@@ -248,9 +257,9 @@ class TripPlanner:
                              'lat': centre['lat'], 'lng': centre['lng']}
                     here = {'lat': centre['lat'], 'lng': centre['lng'], 'name': 'Hotel (' + city + ')', 'city': city}
 
-            # the last day ends with the way back home
+            # the last day ends with the way to the end of the trip (home, or the end city)
             if number == len(dates) - 1:
-                move = self.leg(here['lat'], here['lng'], self.home['lat'], self.home['lng'])
+                move = self.leg(here['lat'], here['lng'], self.end['lat'], self.end['lng'])
                 costs['fuel' if move['mode'] == 'car' else 'flights'] += move['cost']
                 total_km += move['km']
                 day_cost += move['cost']
@@ -275,8 +284,9 @@ class TripPlanner:
             {'name': 'Inside the budget', 'ok': total <= budget,
              'detail': '%.0f of %.0f SAR (%.0f left)' % (total, budget, budget - total) if total <= budget
              else '%.0f SAR over the %.0f SAR budget' % (total - budget, budget)},
-            {'name': 'Back home on the last day', 'ok': return_leg is not None and return_leg['arrive_minutes'] <= DAY_END,
-             'detail': 'Home at %s by %s' % (return_leg['arrive'], return_leg['mode']) if return_leg else 'No return'},
+            {'name': 'At the end before midnight', 'ok': return_leg is not None and return_leg['arrive_minutes'] <= DAY_END,
+             'detail': 'At %s at %s by %s' % (self.end['name'], return_leg['arrive'], return_leg['mode'])
+             if return_leg else 'No way to the end'},
             {'name': 'All activities inside the trip dates', 'ok': not outside,
              'detail': 'OK' if not outside else '%d activity(ies) are outside the dates' % len(outside)},
         ]
@@ -284,6 +294,7 @@ class TripPlanner:
 
         return {
             'home': self.home,
+            'end': self.end,
             'days': days,
             'return_leg': return_leg,
             'budget': {'activities': round(costs['activities'], 2), 'fuel': round(costs['fuel'], 2),
@@ -307,6 +318,16 @@ def local_plan(trip, places, interests, pace='normal', homes=None):
     planner = TripPlanner(trip, [], homes=homes)
     dates = trip_days(trip['start_date'], trip['end_date'])
     cities = [c.strip() for c in trip['destinations'].split(',') if c.strip()] or [trip['home_city']]
+    # the start city first and the end city last, so the route goes in one direction
+    end_city = trip.get('end_city') or trip['home_city']
+    def order(city):
+        # 0 = the start city, 2 = the end city, 1 = the cities in between
+        if city == trip['home_city']:
+            return 0
+        if city == end_city:
+            return 2
+        return 1
+    cities.sort(key=order)
     per_day = {'relaxed': 3, 'normal': 4, 'packed': 6}.get(pace, 4)
     used = set()
     plan = []
@@ -340,7 +361,7 @@ def local_plan(trip, places, interests, pace='normal', homes=None):
                 continue
             if number == len(dates) - 1:
                 # the last day must leave time to get home before midnight
-                back = planner.leg(best['lat'], best['lng'], planner.home['lat'], planner.home['lng'])
+                back = planner.leg(best['lat'], best['lng'], planner.end['lat'], planner.end['lng'])
                 if end + back['minutes'] > 23 * 60 + 30:
                     continue
             # round the start up to the next quarter hour

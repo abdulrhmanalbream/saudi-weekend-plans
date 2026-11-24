@@ -33,7 +33,8 @@ def rows_of(full):
                          day['hotel']['cost'], 'OK'])
     back = full['analysis']['return_leg']
     if back:
-        rows.append(['', back['leave'] + ' - ' + back['arrive'], 'Back home', full['trip']['home_city'], 'Travel',
+        rows.append(['', back['leave'] + ' - ' + back['arrive'], 'To the end: ' + full['analysis']['end']['name'],
+                     full['trip'].get('end_city') or full['trip']['home_city'], 'Travel',
                      '%s %d min, %.1f km' % (back['mode'], back['minutes'], back['km']), back['cost'], ''])
     return rows
 

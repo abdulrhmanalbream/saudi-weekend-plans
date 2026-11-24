@@ -39,7 +39,8 @@ SCHEMA = [
         notes TEXT,
         stays TEXT NOT NULL DEFAULT '',
         car_kmpl INTEGER NOT NULL DEFAULT 12,
-        fuel TEXT NOT NULL DEFAULT '91')''',
+        fuel TEXT NOT NULL DEFAULT '91',
+        end_city TEXT NOT NULL DEFAULT '')''',
     '''CREATE TABLE IF NOT EXISTS activities (
         id INTEGER PRIMARY KEY,
         trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
@@ -69,10 +70,10 @@ SCHEMA = [
 ]
 
 TRIP_FIELDS = ['name', 'home_city', 'destinations', 'start_date', 'end_date',
-               'people', 'budget', 'transport', 'notes', 'stays', 'car_kmpl', 'fuel']
+               'people', 'budget', 'transport', 'notes', 'stays', 'car_kmpl', 'fuel', 'end_city']
 # columns added after the first version: an older planner.db gets them with ALTER TABLE
 NEW_TRIP_COLUMNS = {'stays': "TEXT NOT NULL DEFAULT ''", 'car_kmpl': 'INTEGER NOT NULL DEFAULT 12',
-                    'fuel': "TEXT NOT NULL DEFAULT '91'"}
+                    'fuel': "TEXT NOT NULL DEFAULT '91'", 'end_city': "TEXT NOT NULL DEFAULT ''"}
 ACTIVITY_FIELDS = ['place_id', 'day', 'start_time', 'name', 'city', 'category', 'lat', 'lng',
                    'duration_min', 'cost_per_person', 'actual_cost', 'opens', 'closes', 'notes']
 
