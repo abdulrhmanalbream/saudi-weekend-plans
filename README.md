@@ -24,6 +24,7 @@ Tkinter window (gui.py, customtkinter)  ──HTTP GET/POST──▶  Flask (ser
 | Activities: from 38 catalogue places in 8 cities, or your own; planned and actual cost | Itinerary tab, editor on the right |
 | Travel between every two activities on **real roads** (OSRM): km, minutes, car or flight, fuel or ticket cost | `routing.py` `RoadRouter`, `planner.py` `TripPlanner.leg()` |
 | Car fuel use per trip (km per litre, petrol 91 or 95) and free nights where you have a house or family | Trip form, `planner.py` |
+| **My places**: pin your Home, Family and Friends houses on a map; trips start and end at your Home pin and a night at a Family or Friends pin is free | `gui.py` `PlacesDialog`, `server.py` `/my-places`, `database.py` `saved_places` |
 | “Open in Google Maps”: the day’s route with live traffic and petrol stations | Map tab, `gui.py` `open_google_maps()` |
 | Budget: activities × people + fuel + flights + hotels, planned vs actual | Budget tab (3 charts) |
 | Checks: every day planned, no conflicts, inside the budget, home before midnight, dates | Checks tab, sidebar marks ✓ ✖ • |
@@ -93,6 +94,8 @@ Python 3.10 or newer, on Windows (the Tajawal font is loaded from `fonts/` for t
 | POST | `/trips/add`, `/trips/edit/<id>`, `/trips/delete/<id>` | yes | 400 / 404 on errors |
 | POST | `/trips/<id>/activities/add`, `/activities/edit/<id>`, `/activities/delete/<id>` | yes | 400 / 404 on errors |
 | POST | `/trips/<id>/autoplan` | yes | the plan from Gemini or the local planner |
+| GET | `/my-places` | yes | the user's saved places |
+| POST | `/my-places/add`, `/my-places/delete/<id>` | yes | 400 bad name, kind or a point far from the cities; 404 unknown id |
 
 The token goes in the `Authorization: Bearer …` header. Every query of a trip has `user_id = ?`, so a user can
 only reach their own trips (another user's trip id gives 404).
@@ -112,7 +115,7 @@ only reach their own trips (another user's trip id gives 404).
 
 ## Test results
 
-`python -m unittest discover tests` → **44 tests, all passed** (planner rules, accounts and security, CRUD,
+`python -m unittest discover tests` → **48 tests, all passed** (planner rules, accounts and security, CRUD,
 validation, 404s, user isolation, SQL injection text, data after restart, local planner).
 
 Checks from the project sheet:

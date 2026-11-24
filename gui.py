@@ -361,6 +361,167 @@ class PlanDialog(ctk.CTkToplevel):
         self.on_run(interests, pace, engine)
 
 
+# ---------------------------------------------------------------- my places: home, family, friends
+class PlacesDialog(ctk.CTkToplevel):
+    """A map where the user drops a pin on their home, a family house or a friend's house."""
+
+    KIND_COLOURS = {'Home': INK, 'Family': TEAL, 'Friends': '#3E64B5'}
+
+    def __init__(self, app, api, on_change):
+        super().__init__(app)
+        self.app = app
+        self.api = api
+        self.on_change = on_change
+        self.pin = None        # the point clicked on the map, (lat, lng)
+        self.title('My places')
+        self.configure(fg_color=PANEL)
+        width = min(1100, self.winfo_screenwidth() - 80)
+        height = min(680, self.winfo_screenheight() - 110)
+        self.geometry('%dx%d+%d+20' % (width, height, 40))
+        self.transient(app)
+        self.after(150, self.grab_set)
+
+        # the left side: the form and the list
+        side = ctk.CTkFrame(self, fg_color=PANEL, width=330)
+        side.pack(side='left', fill='y', padx=(18, 8), pady=16)
+        side.pack_propagate(False)
+        ctk.CTkLabel(side, text='\U0001f4cd  My places', font=font(22, 'heavy'), text_color=INK,
+                     anchor='w').pack(fill='x')
+        caption(side, 'Trips start and end at your Home. A night at a\nFamily or Friends place costs nothing.',
+                12).pack(fill='x', pady=(0, 10))
+        caption(side, '1. Find the area (optional)').pack(fill='x')
+        row = ctk.CTkFrame(side, fg_color='transparent')
+        row.pack(fill='x', pady=(2, 8))
+        self.search = entry(row, 'e.g. Al Rawdah, Jeddah', 220)
+        self.search.pack(side='left')
+        self.search.bind('<Return>', lambda event: self.find())
+        button(row, 'Find', self.find, 'dark', 80, 36).pack(side='right')
+        caption(side, '2. Click on the exact place on the map').pack(fill='x')
+        self.pin_label = caption(side, 'No point chosen yet', 12, ACCENT2)
+        self.pin_label.pack(fill='x', pady=(2, 8))
+        caption(side, '3. Name and kind').pack(fill='x')
+        self.name = entry(side, 'e.g. Home, My uncle, Ahmed’s house', 310)
+        self.name.pack(fill='x', pady=(2, 6))
+        self.kind = ctk.CTkSegmentedButton(side, values=['Home', 'Family', 'Friends'], font=font(13, 'bold'),
+                                           height=36, selected_color=ACCENT, selected_hover_color=ACCENT2,
+                                           unselected_color=SOFTBG, unselected_hover_color=LINE, text_color=INK,
+                                           fg_color=SOFTBG)
+        self.kind.set('Home')
+        self.kind.pack(fill='x', pady=(0, 8))
+        button(side, 'Save place', self.save, 'accent', 310, 40).pack(fill='x')
+        self.message = ctk.CTkLabel(side, text='', font=font(12, 'medium'), text_color=ROSE, wraplength=300,
+                                    justify='left', anchor='w')
+        self.message.pack(fill='x', pady=(6, 4))
+        caption(side, 'SAVED', 11, MUTED, 'bold').pack(fill='x', pady=(4, 2))
+        self.list = ctk.CTkScrollableFrame(side, fg_color=SOFTBG, corner_radius=12)
+        self.list.pack(fill='both', expand=True)
+
+        # the right side: the map
+        holder = ctk.CTkFrame(self, fg_color=LINE, corner_radius=14)
+        holder.pack(side='left', fill='both', expand=True, padx=(8, 18), pady=16)
+        self.map = tkintermapview.TkinterMapView(holder, corner_radius=12)
+        self.map.pack(fill='both', expand=True, padx=1, pady=1)
+        base, labels = MAP_STYLES['Streets']
+        self.map.set_tile_server(base, max_zoom=19)
+        self.map.set_position(23.8859, 45.0792)
+        self.map.set_zoom(5)
+        # a left click on the map chooses the point
+        self.map.add_left_click_map_command(self.choose)
+        self.load()
+
+    def choose(self, coords):
+        self.pin = coords
+        if hasattr(self, 'pin_marker') and self.pin_marker:
+            self.pin_marker.delete()
+        self.pin_marker = self.map.set_marker(coords[0], coords[1], text='New place', marker_color_outside=ACCENT,
+                                              marker_color_circle='white', text_color=ACCENT2,
+                                              font=(FAMILY + ' Bold', 10))
+        self.pin_label.configure(text='Chosen: %.5f, %.5f' % coords, text_color=TEAL)
+
+    def find(self):
+        # moves the map to an address (OpenStreetMap search; needs internet)
+        text = self.search.get().strip()
+        if not text:
+            return
+        try:
+            found = self.map.set_address(text + ', Saudi Arabia')
+        except Exception:
+            found = False
+        if found:
+            self.map.set_zoom(15)
+            self.message.configure(text='Now click on the exact place.', text_color=TEAL)
+        else:
+            self.message.configure(text='Not found. Zoom and move the map by hand.', text_color=ROSE)
+
+    def load(self):
+        ok, data, status = self.api.my_places()
+        if not ok:
+            self.message.configure(text=data, text_color=ROSE)
+            return
+        self.draw(data['places'])
+
+    def draw(self, places):
+        for widget in self.list.winfo_children():
+            widget.destroy()
+        self.map.delete_all_marker()
+        self.pin_marker = None
+        icons = {'Home': '\U0001f3e0', 'Family': '\U0001f46a', 'Friends': '\U0001f91d'}
+        if not places:
+            caption(self.list, 'Nothing saved yet.', 12).pack(fill='x', padx=8, pady=8)
+        for place in places:
+            row = ctk.CTkFrame(self.list, fg_color=PANEL, corner_radius=10)
+            row.pack(fill='x', pady=3, padx=2)
+            ctk.CTkLabel(row, text='%s  %s' % (icons[place['kind']], place['name']), font=font(13, 'bold'),
+                         text_color=INK, anchor='w').pack(side='left', padx=(10, 4), pady=6)
+            caption(row, place['city'], 12).pack(side='left')
+            ctk.CTkButton(row, text='✕', width=30, height=26, corner_radius=8, fg_color=SOFTBG,
+                          hover_color='#F6D5CF', text_color=ROSE, font=font(12, 'bold'),
+                          command=lambda p=place: self.remove(p)).pack(side='right', padx=6)
+            self.map.set_marker(place['lat'], place['lng'], text=place['name'][:18],
+                                marker_color_outside=self.KIND_COLOURS[place['kind']], marker_color_circle='white',
+                                text_color=self.KIND_COLOURS[place['kind']], font=(FAMILY + ' Bold', 10))
+        if places and self.pin is None:
+            # wait until the window has its size, or the map cannot fit the view
+            self.after(500, self.fit_view, places)
+
+    def fit_view(self, places):
+        lats = [p['lat'] for p in places]
+        lngs = [p['lng'] for p in places]
+        if len(places) == 1:
+            self.map.set_position(lats[0], lngs[0])
+            self.map.set_zoom(13)
+        else:
+            pad = max(0.05, (max(lats) - min(lats)) * 0.15)
+            self.map.fit_bounding_box((max(lats) + pad, min(lngs) - pad), (min(lats) - pad, max(lngs) + pad))
+
+    def save(self):
+        if self.pin is None:
+            self.message.configure(text='Click on the map first to choose the place.', text_color=ROSE)
+            return
+        ok, data, status = self.api.add_my_place(self.name.get(), self.kind.get(), self.pin[0], self.pin[1])
+        if not ok:
+            self.message.configure(text=data, text_color=ROSE)
+            return
+        self.message.configure(text=data['message'], text_color=TEAL)
+        set_text(self.name, '')
+        self.pin = None
+        self.pin_label.configure(text='No point chosen yet', text_color=ACCENT2)
+        self.draw(data['places'])
+        self.on_change()
+
+    def remove(self, place):
+        if not messagebox.askyesno('Remove place', 'Remove "%s"?' % place['name'], parent=self):
+            return
+        ok, data, status = self.api.delete_my_place(place['id'])
+        if not ok:
+            self.message.configure(text=data, text_color=ROSE)
+            self.load()
+            return
+        self.message.configure(text=data['message'], text_color=TEAL)
+        self.draw(data['places'])
+        self.on_change()
+
+
 # ---------------------------------------------------------------- the main screen
 class MainView(ctk.CTkFrame):
     def __init__(self, app):
@@ -410,7 +571,9 @@ class MainView(ctk.CTkFrame):
         names.pack(side='left', padx=10)
         ctk.CTkLabel(names, text='Weekend Planner', font=font(20, 'heavy'), text_color='white').pack(anchor='w')
         ctk.CTkLabel(names, text='Saudi Arabia', font=font(12, 'medium'), text_color='#8FA3A8').pack(anchor='w')
-        button(side, '+  New trip', self.new_trip, 'accent', 246, 42).pack(padx=22, pady=(0, 18))
+        button(side, '+  New trip', self.new_trip, 'accent', 246, 42).pack(padx=22, pady=(0, 8))
+        button(side, '\U0001f4cd  My places (home, family, friends)', self.my_places, 'side', 246, 38).pack(
+            padx=22, pady=(0, 18))
         ctk.CTkLabel(side, text='MY TRIPS', font=font(11, 'bold'), text_color='#8FA3A8').pack(anchor='w', padx=24)
         self.trip_box = ctk.CTkScrollableFrame(side, fg_color='transparent', scrollbar_button_color=INK2)
         self.trip_box.pack(fill='both', expand=True, padx=12, pady=(6, 10))
@@ -602,7 +765,7 @@ class MainView(ctk.CTkFrame):
         start = day['items'][0]['travel']['geometry'][0]
         stops = [(i['activity']['lat'], i['activity']['lng']) for i in day['items']]
         if index == len(days) - 1:
-            home = self.centres[self.full['trip']['home_city']]
+            home = self.full['analysis']['home']
             stops.append((home['lat'], home['lng']))
         end = stops.pop()
         # Google Maps directions link: no key is needed; it allows up to 9 stops in between
@@ -770,7 +933,8 @@ class MainView(ctk.CTkFrame):
                                          money(a['cost_per_person'] * people), mark))
             if day['hotel']:
                 if day['hotel'].get('own'):
-                    night = '   \U0001f3e1  Night at your place in %s  (free)' % day['hotel']['city']
+                    night = '   \U0001f3e1  Night at %s  (free)' % day['hotel'].get('place', 'your place in ' +
+                                                                                day['hotel']['city'])
                 else:
                     night = '   \U0001f3e8  Hotel in %s  (%d room(s))' % (day['hotel']['city'], day['hotel']['rooms'])
                 self.tree.insert(parent, 'end', iid='hotel-' + day['date'], tags=('extra',), text=night,
@@ -911,6 +1075,14 @@ class MainView(ctk.CTkFrame):
             self.open_trip(self.trip_id)
 
     # ---------------------------------------------------------------- trips
+    def my_places(self):
+        PlacesDialog(self.app, self.api, self.places_changed)
+
+    def places_changed(self):
+        # a new or removed home changes where the trips start and sleep
+        if self.trip_id is not None:
+            self.open_trip(self.trip_id)
+
     def new_trip(self):
         TripDialog(self.app, self.cities, self.save_new_trip)
 
@@ -1002,9 +1174,18 @@ class MainView(ctk.CTkFrame):
         analysis = self.full['analysis']
         values = self.map_day.cget('values')
         choice_index = values.index(self.map_day.get()) if self.map_day.get() in values else 0
-        home = self.centres[self.full['trip']['home_city']]
-        self.map.set_marker(home['lat'], home['lng'], text='Home', marker_color_circle='white',
+        # home: the saved home of the user, or the city centre
+        home = analysis['home']
+        self.map.set_marker(home['lat'], home['lng'], text=home['name'][:18], marker_color_circle='white',
                             marker_color_outside=INK, text_color=INK, font=(FAMILY + ' ExtraBold', 11))
+        # the free nights (family, friends) and the hotels
+        for day in analysis['days']:
+            night = day['hotel']
+            if night and 'lat' in night:
+                self.map.set_marker(night['lat'], night['lng'],
+                                    text=night.get('place', 'Hotel')[:18] if night['own'] else 'Hotel',
+                                    marker_color_circle='white', marker_color_outside=TEAL if night['own'] else GOLD,
+                                    text_color=TEAL if night['own'] else ACCENT2, font=(FAMILY + ' Bold', 10))
         points = []
         for number, day in enumerate(analysis['days']):
             if choice_index > 0 and number != choice_index - 1:
