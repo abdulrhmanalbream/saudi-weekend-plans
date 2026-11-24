@@ -22,7 +22,9 @@ Tkinter window (gui.py, customtkinter)  ──HTTP GET/POST──▶  Flask (ser
 | Accounts: register, log in, log out; PBKDF2 password hashes, session tokens, lock after 5 wrong passwords | `security.py`, `server.py` |
 | Trips: add, view, edit, delete (with confirmation) | Sidebar and the *Edit trip* / *Delete* buttons |
 | Activities: from 38 catalogue places in 8 cities, or your own; planned and actual cost | Itinerary tab, editor on the right |
-| Travel between every two activities: km, minutes, car or flight, fuel or ticket cost | `planner.py` `TripPlanner.leg()` |
+| Travel between every two activities on **real roads** (OSRM): km, minutes, car or flight, fuel or ticket cost | `routing.py` `RoadRouter`, `planner.py` `TripPlanner.leg()` |
+| Car fuel use per trip (km per litre, petrol 91 or 95) and free nights where you have a house or family | Trip form, `planner.py` |
+| “Open in Google Maps”: the day’s route with live traffic and petrol stations | Map tab, `gui.py` `open_google_maps()` |
 | Budget: activities × people + fuel + flights + hotels, planned vs actual | Budget tab (3 charts) |
 | Checks: every day planned, no conflicts, inside the budget, home before midnight, dates | Checks tab, sidebar marks ✓ ✖ • |
 | Interactive map: numbered pins, one coloured route per day, Streets / Light / Satellite styles | Map tab (`tkintermapview`) |
@@ -32,11 +34,15 @@ Tkinter window (gui.py, customtkinter)  ──HTTP GET/POST──▶  Flask (ser
 
 ## How the planner calculates
 
-* **Distance:** haversine distance between the two coordinates × 1.3 (a road is longer than a straight line).
-* **Time:** under 40 km is a city drive at 40 km/h, otherwise 100 km/h, plus 10 min to park. A leg of 500 km or
-  more is flown when the trip allows flights: 90 min in the air + 150 min at the airports.
-* **Cost:** fuel = km ÷ 10 km/L × 2.33 SAR × cars (4 people per car); flight = (250 + 0.35 × km) × people;
-  hotel = city price × rooms (2 people per room) for every night away from the home city.
+* **Road:** the server asks OSRM (Open Source Routing Machine, on OpenStreetMap roads, no key) for the real road
+  distance, time and shape of every leg. The legs of a trip are fetched together with threads and saved in the
+  `route_cache` table, so each leg is asked only once. Time = OSRM time × 1.25 in a city (traffic) or × 1.05 on
+  the highway, + 10 min to park. Without internet: haversine × 1.3 at 40 / 100 km/h, shown with ≈.
+* **Flights:** a leg of 500 km or more is flown when the trip allows flights: 90 min in the air + 150 min at the
+  airports, (250 + 0.35 × km) SAR per person.
+* **Cost:** fuel = km ÷ (car km per litre) × petrol price (91: 2.18, 95: 2.33 SAR) × cars (4 people per car);
+  hotel = city price × rooms (2 people per room) for every night away from home, **free** in a city where the
+  group has a house or family; the next day then starts from that place.
 * **Conflict:** the end of the previous activity + travel time is later than the start of the next one
   (or the first leg of a day would have to start the day before).
 * **Complete:** all five checks pass. All the constants are at the top of `planner.py`.
@@ -106,7 +112,7 @@ only reach their own trips (another user's trip id gives 404).
 
 ## Test results
 
-`python -m unittest discover tests` → **38 tests, all passed** (planner rules, accounts and security, CRUD,
+`python -m unittest discover tests` → **44 tests, all passed** (planner rules, accounts and security, CRUD,
 validation, 404s, user isolation, SQL injection text, data after restart, local planner).
 
 Checks from the project sheet:
@@ -126,6 +132,7 @@ Checks from the project sheet:
 ## Credits
 
 * Map data © OpenStreetMap contributors; map tiles © Esri (World Street Map, Light Gray Canvas, World Imagery).
+* Road routing: OSRM public demo server (router.project-osrm.org), OpenStreetMap data.
 * Tajawal font by Boutros Fonts, SIL Open Font License (`fonts/OFL.txt`).
 * Libraries: Flask, customtkinter, tkintermapview, matplotlib, openpyxl, fpdf2.
 * Gemini API by Google (optional).

@@ -26,8 +26,11 @@ def rows_of(full):
             rows.append([day_title(day['date']), a['start_time'] + ' - ' + item['end'], a['name'], a['city'],
                          a['category'], travel, a['cost_per_person'] * full['trip']['people'], issues or 'OK'])
         if day['hotel']:
-            rows.append([day_title(day['date']), 'night', 'Hotel in ' + day['hotel']['city'], day['hotel']['city'],
-                         'Hotel', '%d room(s)' % day['hotel']['rooms'], day['hotel']['cost'], 'OK'])
+            own = day['hotel'].get('own')
+            rows.append([day_title(day['date']), 'night',
+                         ('Your place in ' if own else 'Hotel in ') + day['hotel']['city'], day['hotel']['city'],
+                         'Stay' if own else 'Hotel', 'free' if own else '%d room(s)' % day['hotel']['rooms'],
+                         day['hotel']['cost'], 'OK'])
     back = full['analysis']['return_leg']
     if back:
         rows.append(['', back['leave'] + ' - ' + back['arrive'], 'Back home', full['trip']['home_city'], 'Travel',

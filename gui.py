@@ -7,6 +7,8 @@ import os
 import queue
 import threading
 import tkinter as tk
+import webbrowser
+from urllib.parse import urlencode
 from datetime import date, timedelta
 from tkinter import filedialog, messagebox, ttk
 
@@ -208,13 +210,18 @@ class TripDialog(ctk.CTkToplevel):
         self.resizable(False, False)
         self.transient(app)
         self.after(150, self.grab_set)
+        # never taller than the screen: the form scrolls when it does not fit
+        height = min(800, self.winfo_screenheight() - 110)
+        self.geometry('560x%d+%d+20' % (height, app.winfo_rootx() + 300))
+        holder = ctk.CTkScrollableFrame(self, fg_color=PANEL, scrollbar_button_color=LINE)
+        holder.pack(fill='both', expand=True)
         today = date.today()
         start = today + timedelta(days=(3 - today.weekday()) % 7)   # the next Thursday
         trip = trip or {'name': '', 'home_city': 'Riyadh', 'destinations': 'Riyadh',
                         'start_date': start.isoformat(), 'end_date': (start + timedelta(days=2)).isoformat(),
-                        'people': 2, 'budget': 3000, 'transport': 'car', 'notes': ''}
-        box = ctk.CTkFrame(self, fg_color='transparent')
-        box.pack(padx=28, pady=24)
+                        'people': 2, 'budget': 3000, 'transport': 'car', 'notes': '', 'stays': ''}
+        box = ctk.CTkFrame(holder, fg_color='transparent')
+        box.pack(padx=18, pady=16)
         ctk.CTkLabel(box, text='Edit trip' if trip.get('id') else 'New trip', font=font(24, 'heavy'),
                      text_color=INK).grid(row=0, column=0, columnspan=4, sticky='w', pady=(0, 10))
 
@@ -246,6 +253,19 @@ class TripDialog(ctk.CTkToplevel):
             self.city_vars[city] = var
         row = 6 + (len(cities) + 3) // 4
 
+        # the cities with a house or family: a night there costs nothing
+        caption(box, 'I have a house or family in (free nights)').grid(row=row, column=0, columnspan=4, sticky='w',
+                                                                        pady=(12, 2))
+        free = [c.strip() for c in (trip.get('stays') or '').split(',')]
+        self.stay_vars = {}
+        for number, city in enumerate(cities):
+            var = tk.BooleanVar(value=city in free)
+            ctk.CTkCheckBox(box, text=city, variable=var, font=font(13), text_color=INK, fg_color=TEAL,
+                            hover_color=TEAL2, border_color=LINE, corner_radius=6, checkbox_width=20,
+                            checkbox_height=20).grid(row=row + 1 + number // 4, column=number % 4, sticky='w', pady=3)
+            self.stay_vars[city] = var
+        row = row + 1 + (len(cities) + 3) // 4
+
         caption(box, 'Start (YYYY-MM-DD)').grid(row=row, column=0, sticky='w', pady=(12, 0))
         caption(box, 'End').grid(row=row, column=1, sticky='w', pady=(12, 0), padx=(8, 0))
         caption(box, 'People').grid(row=row, column=2, sticky='w', pady=(12, 0), padx=(8, 0))
@@ -256,11 +276,24 @@ class TripDialog(ctk.CTkToplevel):
             widget.grid(row=row + 1, column=column, sticky='w', padx=(0 if column == 0 else 8, 0))
             set_text(widget, value)
 
-        caption(box, 'Notes').grid(row=row + 2, column=0, columnspan=4, sticky='w', pady=(12, 0))
+        # the car: how many km it goes on one litre, and the petrol it uses
+        caption(box, 'Car: km per litre').grid(row=row + 2, column=0, columnspan=2, sticky='w', pady=(12, 0))
+        caption(box, 'Petrol').grid(row=row + 2, column=2, columnspan=2, sticky='w', pady=(12, 0), padx=(8, 0))
+        self.kmpl = entry(box, 'e.g. 12 (SUV 8, small car 20)', 225)
+        self.kmpl.grid(row=row + 3, column=0, columnspan=2, sticky='w')
+        set_text(self.kmpl, trip.get('car_kmpl') or 12)
+        self.fuel = ctk.CTkSegmentedButton(box, values=['91', '95'], font=font(13, 'bold'), height=36,
+                                           selected_color=ACCENT, selected_hover_color=ACCENT2,
+                                           unselected_color=SOFTBG, unselected_hover_color=LINE,
+                                           text_color=INK, fg_color=SOFTBG)
+        self.fuel.set(str(trip.get('fuel') or '91'))
+        self.fuel.grid(row=row + 3, column=2, columnspan=2, sticky='we', padx=(8, 0))
+
+        caption(box, 'Notes').grid(row=row + 4, column=0, columnspan=4, sticky='w', pady=(12, 0))
         self.notes = entry(box, 'optional', 470)
-        self.notes.grid(row=row + 3, column=0, columnspan=4, sticky='w')
+        self.notes.grid(row=row + 5, column=0, columnspan=4, sticky='w')
         set_text(self.notes, trip.get('notes'))
-        button(box, 'Save trip', self.save, 'accent', 470, 42).grid(row=row + 4, column=0, columnspan=4, pady=(18, 0))
+        button(box, 'Save trip', self.save, 'accent', 470, 42).grid(row=row + 6, column=0, columnspan=4, pady=(18, 0))
         self.name.focus_set()
 
     def save(self):
@@ -268,7 +301,9 @@ class TripDialog(ctk.CTkToplevel):
                   'destinations': ', '.join(c for c, var in self.city_vars.items() if var.get()),
                   'start_date': self.start.get(), 'end_date': self.end.get(), 'people': self.people.get(),
                   'budget': self.budget.get(), 'transport': 'flight' if self.transport.get() == 'Fly' else 'car',
-                  'notes': self.notes.get()}
+                  'notes': self.notes.get(),
+                  'stays': ', '.join(c for c, var in self.stay_vars.items() if var.get()),
+                  'car_kmpl': self.kmpl.get(), 'fuel': self.fuel.get()}
         if self.on_save(values):
             self.destroy()
 
@@ -410,18 +445,20 @@ class MainView(ctk.CTkFrame):
     def build_header(self):
         head = ctk.CTkFrame(self.content, fg_color='transparent')
         head.pack(fill='x')
+        # the buttons are packed first, so a long line under the title never squeezes them
+        button(head, 'PDF', self.to_pdf, 'ghost', 70).pack(side='right', anchor='n')
+        button(head, 'Excel', self.to_excel, 'ghost', 70).pack(side='right', padx=8, anchor='n')
+        button(head, 'Delete', self.delete_trip, 'ghost', 80).pack(side='right', anchor='n')
+        button(head, 'Edit trip', self.edit_trip, 'ghost', 90).pack(side='right', padx=8, anchor='n')
+        button(head, '✨  Plan my weekend', self.plan_dialog, 'accent', 180).pack(side='right', anchor='n')
         texts = ctk.CTkFrame(head, fg_color='transparent')
-        texts.pack(side='left')
+        texts.pack(side='left', fill='x', expand=True)
         self.trip_title = ctk.CTkLabel(texts, text='Choose or create a trip', font=font(30, 'heavy'),
                                        text_color=INK, anchor='w')
         self.trip_title.pack(anchor='w')
-        self.trip_line = caption(texts, '', 14)
+        self.trip_line = ctk.CTkLabel(texts, text='', font=font(14, 'medium'), text_color=MUTED, anchor='w',
+                                      justify='left')
         self.trip_line.pack(anchor='w')
-        button(head, 'PDF', self.to_pdf, 'ghost', 70).pack(side='right')
-        button(head, 'Excel', self.to_excel, 'ghost', 70).pack(side='right', padx=8)
-        button(head, 'Delete', self.delete_trip, 'ghost', 80).pack(side='right')
-        button(head, 'Edit trip', self.edit_trip, 'ghost', 90).pack(side='right', padx=8)
-        button(head, '✨  Plan my weekend', self.plan_dialog, 'accent', 180).pack(side='right')
 
     def build_kpis(self):
         row = ctk.CTkFrame(self.content, fg_color='transparent')
@@ -537,6 +574,8 @@ class MainView(ctk.CTkFrame):
                                                 selected_hover_color=ACCENT2, unselected_color=INK2,
                                                 unselected_hover_color=INK, fg_color=INK2, text_color='white')
         self.map_style.pack(side='right')
+        button(bar, '\U0001f5fa  Open in Google Maps', self.open_google_maps, 'teal', 190, 34).pack(side='right',
+                                                                                                padx=10)
         holder = ctk.CTkFrame(page, fg_color=LINE, corner_radius=14)
         holder.pack(fill='both', expand=True, padx=4, pady=(0, 4))
         self.map = tkintermapview.TkinterMapView(holder, corner_radius=12)
@@ -547,6 +586,32 @@ class MainView(ctk.CTkFrame):
                  bg='white', fg=MUTED).place(relx=1.0, rely=1.0, anchor='se')
         self.map_style.set('Streets')
         self.set_map_style('Streets')
+
+    def open_google_maps(self):
+        """Opens the route of the chosen day in Google Maps (live traffic, petrol stations, turn by turn)."""
+        if not self.full:
+            return
+        days = self.full['analysis']['days']
+        values = self.map_day.cget('values')
+        index = max(0, values.index(self.map_day.get()) - 1) if self.map_day.get() in values else 0
+        day = days[index]
+        if not day['items']:
+            messagebox.showinfo('Google Maps', 'This day has no activities yet.', parent=self.app)
+            return
+        # the day starts where the first move starts (home, your place or the hotel)
+        start = day['items'][0]['travel']['geometry'][0]
+        stops = [(i['activity']['lat'], i['activity']['lng']) for i in day['items']]
+        if index == len(days) - 1:
+            home = self.centres[self.full['trip']['home_city']]
+            stops.append((home['lat'], home['lng']))
+        end = stops.pop()
+        # Google Maps directions link: no key is needed; it allows up to 9 stops in between
+        params = {'api': '1', 'origin': '%f,%f' % tuple(start), 'destination': '%f,%f' % end,
+                  'travelmode': 'driving'}
+        if stops:
+            params['waypoints'] = '|'.join('%f,%f' % p for p in stops[:9])
+        webbrowser.open('https://www.google.com/maps/dir/?' + urlencode(params))
+        self.say('Opened day %d in Google Maps.' % (index + 1))
 
     def set_map_style(self, name):
         # each style is a tile server; Light and Satellite add a layer of labels on top
@@ -635,10 +700,14 @@ class MainView(ctk.CTkFrame):
         trip, analysis = data['trip'], data['analysis']
         budget = analysis['budget']
         self.trip_title.configure(text=trip['name'])
-        self.trip_line.configure(text='%s → %s   ·   %s → %s   ·   %d people   ·   %s'
+        # line 1: when, where and who; line 2: how the group moves and where it sleeps for free
+        self.trip_line.configure(text='%s → %s  ·  %s → %s  ·  %d people'
                                  % (day_name(trip['start_date']), day_name(trip['end_date']), trip['home_city'],
-                                    trip['destinations'], trip['people'],
-                                    'flying far legs' if trip['transport'] == 'flight' else 'driving'))
+                                    trip['destinations'], trip['people'])
+                                 + '\n%s  ·  car %s km/L, petrol %s'
+                                 % ('flying far legs' if trip['transport'] == 'flight' else 'driving',
+                                    trip.get('car_kmpl') or 12, trip.get('fuel') or '91')
+                                 + ('  ·  free nights in ' + trip['stays'] if trip.get('stays') else ''))
         value, note = self.kpis['total']
         value.configure(text=money(budget['total']), text_color=INK)
         note.configure(text='%s per person' % money(budget['per_person']))
@@ -688,7 +757,10 @@ class MainView(ctk.CTkFrame):
                 a, move = item['activity'], item['travel']
                 levels = [x['level'] for x in item['issues']]
                 tag = 'conflict' if 'conflict' in levels else ('warning' if levels else '')
-                travel = ('%s  %d min  ·  %s km' % (icons[move['mode']], move['minutes'],
+                # ≈ marks an estimate (no road service); without it the time is from the real road
+                travel = ('%s  %s%d min  ·  %s km' % (icons[move['mode']],
+                                                      '≈' if move.get('source') == 'estimate' else '',
+                                                      move['minutes'],
                                                       ('%.1f' if move['km'] < 10 else '%.0f') % move['km'])
                           if move['minutes'] else 'same place')
                 mark = '✖' if tag == 'conflict' else ('⚠' if tag == 'warning' else '✓')
@@ -697,9 +769,11 @@ class MainView(ctk.CTkFrame):
                                  values=(a['start_time'] + ' – ' + item['end'], travel, a['city'],
                                          money(a['cost_per_person'] * people), mark))
             if day['hotel']:
-                self.tree.insert(parent, 'end', iid='hotel-' + day['date'], tags=('extra',),
-                                 text='   \U0001f3e8  Night in %s  (%d room(s))' % (day['hotel']['city'],
-                                                                                 day['hotel']['rooms']),
+                if day['hotel'].get('own'):
+                    night = '   \U0001f3e1  Night at your place in %s  (free)' % day['hotel']['city']
+                else:
+                    night = '   \U0001f3e8  Hotel in %s  (%d room(s))' % (day['hotel']['city'], day['hotel']['rooms'])
+                self.tree.insert(parent, 'end', iid='hotel-' + day['date'], tags=('extra',), text=night,
                                  values=('night', '', day['hotel']['city'], money(day['hotel']['cost']), ''))
         back = analysis['return_leg']
         if back and analysis['days']:
@@ -931,12 +1005,13 @@ class MainView(ctk.CTkFrame):
         home = self.centres[self.full['trip']['home_city']]
         self.map.set_marker(home['lat'], home['lng'], text='Home', marker_color_circle='white',
                             marker_color_outside=INK, text_color=INK, font=(FAMILY + ' ExtraBold', 11))
-        points = [(home['lat'], home['lng'])]
+        points = []
         for number, day in enumerate(analysis['days']):
             if choice_index > 0 and number != choice_index - 1:
                 continue
             colour = DAY_COLOURS[number % len(DAY_COLOURS)]
             path = []
+            route = []
             for order, item in enumerate(day['items']):
                 a = item['activity']
                 bad = any(x['level'] == 'conflict' for x in item['issues'])
@@ -948,18 +1023,17 @@ class MainView(ctk.CTkFrame):
                                     marker_color_circle='white', marker_color_outside=ROSE if bad else colour,
                                     text_color=ROSE if bad else colour, font=(FAMILY + ' ExtraBold', 11))
                 path.append((a['lat'], a['lng']))
-            # the route of the day starts where the night was (home or a hotel)
-            hotel = analysis['days'][number - 1]['hotel'] if number else None
-            start = (self.centres[hotel['city']]['lat'], self.centres[hotel['city']]['lng']) if hotel else \
-                (home['lat'], home['lng'])
-            route = [start] + path
-            if number == len(analysis['days']) - 1:
-                route.append((home['lat'], home['lng']))
+                # the shape of the road to this activity (from OSRM), or a straight line
+                route += [tuple(p) for p in item['travel']['geometry']]
+            if number == len(analysis['days']) - 1 and analysis['return_leg']:
+                route += [tuple(p) for p in analysis['return_leg']['geometry']]
             if len(route) > 1:
                 self.map.set_path(route, color=colour, width=4)
-            points += path
+            points += route or path
             ctk.CTkLabel(self.map_legend, text='● Day %d' % (number + 1), text_color=colour,
                          font=font(13, 'bold')).pack(side='left', padx=8)
+        if choice_index == 0:
+            points.append((home['lat'], home['lng']))
         if len(points) > 1:
             lats = [p[0] for p in points]
             lngs = [p[1] for p in points]

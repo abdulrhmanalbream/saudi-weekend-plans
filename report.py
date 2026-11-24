@@ -52,8 +52,9 @@ class ReportWriter(threading.Thread):
                             for issue in item['issues']:
                                 f.write('        ! %s\n' % issue['text'])
                         if day['hotel']:
-                            f.write('     night      Hotel in %-21s %-8s %7.0f SAR\n'
-                                    % (day['hotel']['city'], '', day['hotel']['cost']))
+                            place = 'Your place in' if day['hotel'].get('own') else 'Hotel in'
+                            f.write('     night      %s %-21s %7.0f SAR\n'
+                                    % (place, day['hotel']['city'], day['hotel']['cost']))
                     f.write('  Cost: activities %.0f + fuel %.0f + flights %.0f + hotels %.0f = %.0f of %.0f SAR\n'
                             % (budget['activities'], budget['fuel'], budget['flights'], budget['hotels'],
                                budget['total'], budget['limit']))
