@@ -20,7 +20,7 @@ Tkinter window (gui.py, customtkinter)  ──HTTP GET/POST──▶  Flask (ser
 | Feature | Where |
 |---|---|
 | Accounts: register, log in, log out; PBKDF2 password hashes, session tokens, lock after 5 wrong passwords | `security.py`, `server.py` |
-| Trips: add, view, edit, delete (with confirmation) | Sidebar and the *Edit trip* / *Delete* buttons |
+| Trips: add, view, edit, delete (with confirmation); a trip may start in one city and end in another | Sidebar and the *Edit trip* / *Delete* buttons |
 | Activities: from 38 catalogue places in 8 cities, or your own; planned and actual cost | Itinerary tab, editor on the right |
 | Travel between every two activities on **real roads** (OSRM): km, minutes, car or flight, fuel or ticket cost | `routing.py` `RoadRouter`, `planner.py` `TripPlanner.leg()` |
 | Car fuel use per trip (km per litre, petrol 91 or 95) and free nights where you have a house or family | Trip form, `planner.py` |
@@ -115,7 +115,7 @@ only reach their own trips (another user's trip id gives 404).
 
 ## Test results
 
-`python -m unittest discover tests` → **48 tests, all passed** (planner rules, accounts and security, CRUD,
+`python -m unittest discover tests` → **49 tests, all passed** (planner rules, accounts and security, CRUD,
 validation, 404s, user isolation, SQL injection text, data after restart, local planner).
 
 Checks from the project sheet:
