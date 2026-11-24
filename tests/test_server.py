@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import server  # noqa: E402
 from database import Database  # noqa: E402
+from routing import RoadRouter  # noqa: E402
 
 TRIP = {'name': 'Test trip', 'home_city': 'Riyadh', 'destinations': 'Riyadh', 'start_date': '2026-12-03',
         'end_date': '2026-12-04', 'people': '2', 'budget': '3000', 'transport': 'car', 'notes': ''}
@@ -23,6 +24,8 @@ class ServerTest(unittest.TestCase):
         server.db.create_tables()
         server.limiter.fails.clear()
         server.gemini.key = ''          # the tests never call the internet
+        server.router = RoadRouter(server.db, enabled=False)
+        server.saved_roads = RoadRouter(server.db, enabled=False)
         self.client = server.app.test_client()
 
     def tearDown(self):
@@ -105,6 +108,15 @@ class TestTrips(ServerTest):
                     {'end_date': '2026-12-01'}, {'people': 'two'}, {'people': '0'}, {'budget': '-5'},
                     {'transport': 'boat'}, {'end_date': '2026-12-30'}):
             self.assertEqual(self.new_trip(headers, **bad).status_code, 400, bad)
+
+    def test_free_stay_and_car_are_saved(self):
+        headers = self.login()
+        trip = self.new_trip(headers, destinations='Jeddah, Madinah', stays='Jeddah', car_kmpl='20', fuel='95').json
+        self.assertEqual(trip['trip']['stays'], 'Jeddah')
+        self.assertEqual(trip['trip']['car_kmpl'], 20)
+        self.assertEqual(self.new_trip(headers, car_kmpl='2').status_code, 400)
+        self.assertEqual(self.new_trip(headers, fuel='98').status_code, 400)
+        self.assertEqual(self.new_trip(headers, stays='Paris').status_code, 400)
 
     def test_unknown_trip_is_404(self):
         headers = self.login()

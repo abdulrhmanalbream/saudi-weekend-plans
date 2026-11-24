@@ -18,7 +18,7 @@ class ApiClient:
         self.token = None
         self.username = None
 
-    def send(self, path, values=None, params=None, timeout=10):
+    def send(self, path, values=None, params=None, timeout=20):
         url = self.server + path
         if params:
             url += '?' + urlencode(params)

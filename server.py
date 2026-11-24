@@ -9,7 +9,8 @@ from flask import Flask, g, request
 from ai_planner import AIError, GeminiPlanner
 from database import Database
 from places_data import CATEGORIES, CITIES
-from planner import TripPlanner, local_plan, to_minutes, trip_days
+from planner import FUEL_PRICES, TripPlanner, fit_times, local_plan, to_minutes, trip_days
+from routing import RoadRouter
 from security import LoginLimiter, check_password, hash_password, new_token
 
 MAX_DAYS = 7
@@ -20,6 +21,9 @@ app = Flask(__name__)
 db = Database()
 limiter = LoginLimiter()
 gemini = GeminiPlanner()
+router = RoadRouter(db)
+# the list of trips uses only the roads already saved, so it stays fast
+saved_roads = RoadRouter(db, fetch=False)
 
 
 # ---------------------------------------------------------------- helpers
@@ -62,6 +66,8 @@ def check_trip(form):
     destinations = [c.strip() for c in form.get('destinations', '').split(',') if c.strip()]
     transport = form.get('transport', '').strip()
     notes = form.get('notes', '').strip()
+    # optional: cities with a house or family, where a night costs nothing
+    stays = [c.strip() for c in form.get('stays', '').split(',') if c.strip()]
     if not name:
         return None, 'The trip name is required.'
     if len(name) > 60:
@@ -73,6 +79,9 @@ def check_trip(form):
     for city in destinations:
         if city not in CITIES:
             return None, 'Unknown destination: ' + city
+    for city in stays:
+        if city not in CITIES:
+            return None, 'Unknown city for a free stay: ' + city
     if transport not in ('car', 'flight'):
         return None, 'Transport must be car or flight.'
     try:
@@ -92,9 +101,17 @@ def check_trip(form):
         return None, problem
     if len(notes) > 300:
         return None, 'Notes must be 300 characters or fewer.'
+    # how far the car goes on one litre (a big car about 8, a small car about 20)
+    car_kmpl, problem = whole_number(form, 'car_kmpl', 4, 40, 'Km per litre') if form.get('car_kmpl', '').strip()         else (12, None)
+    if problem:
+        return None, problem
+    fuel = form.get('fuel', '91').strip() or '91'
+    if fuel not in FUEL_PRICES:
+        return None, 'Fuel must be 91 or 95.'
     return {'name': name, 'home_city': home, 'destinations': ', '.join(destinations),
             'start_date': start.isoformat(), 'end_date': end.isoformat(), 'people': people,
-            'budget': budget, 'transport': transport, 'notes': notes}, None
+            'budget': budget, 'transport': transport, 'notes': notes,
+            'stays': ', '.join(c for c in stays if c != home), 'car_kmpl': car_kmpl, 'fuel': fuel}, None
 
 
 def check_activity(form, trip):
@@ -173,7 +190,7 @@ def check_activity(form, trip):
 def full_trip(trip):
     """The trip with its activities and the analysis of the planner."""
     activities = db.activities(trip['id'])
-    return {'trip': trip, 'activities': activities, 'analysis': TripPlanner(trip, activities).analyse()}
+    return {'trip': trip, 'activities': activities, 'analysis': TripPlanner(trip, activities, router).analyse()}
 
 
 def items_from_plan(plan):
@@ -259,7 +276,7 @@ def list_trips():
     trips = db.trips(g.user['id'])
     result = []
     for trip in trips:
-        analysis = TripPlanner(trip, db.activities(trip['id'])).analyse()
+        analysis = TripPlanner(trip, db.activities(trip['id']), saved_roads).analyse()
         result.append(dict(trip, status=analysis['status'], total=analysis['budget']['total'],
                            conflicts=analysis['conflicts']))
     return {'trips': result, 'count': len(result)}
@@ -372,8 +389,10 @@ def autoplan(trip_id):
         return error('No place fits these dates and cities.')
 
     # replace the old activities with the new plan
+    # move the starts later where the real road takes longer than planned
+    items = fit_times(trip, items_from_plan(plan), router)
     db.clear_activities(trip_id)
-    db.add_activities(trip_id, items_from_plan(plan))
+    db.add_activities(trip_id, items)
     return dict(full_trip(trip), message='Plan ready (%s): %d activities.' % (source, len(plan)),
                 source=source, summary=summary)
 

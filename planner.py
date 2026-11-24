@@ -9,9 +9,11 @@ from datetime import date, timedelta
 from places_data import CITIES
 
 # the numbers behind every estimate, in one place so they are easy to explain and change
-ROAD_FACTOR = 1.3          # a road is about 30% longer than the straight line
-CITY_SPEED = 40            # km/h inside a city (traffic, lights)
-HIGHWAY_SPEED = 100        # km/h between cities
+ROAD_FACTOR = 1.3          # without the road service: a road is about 30% longer than the straight line
+CITY_SPEED = 40            # without the road service: km/h inside a city (traffic, lights)
+HIGHWAY_SPEED = 100        # without the road service: km/h between cities
+CITY_TRAFFIC = 1.25        # OSRM gives free-flow times: +25% for traffic inside a city
+HIGHWAY_TRAFFIC = 1.05     # and +5% on the highway
 CITY_LIMIT_KM = 40         # a leg shorter than this is a city drive
 PARKING_MIN = 10           # minutes to park at each stop
 FLIGHT_FROM_KM = 500       # a longer leg is flown when the trip allows flights
@@ -19,8 +21,8 @@ FLIGHT_AIR_MIN = 90        # minutes in the air
 AIRPORT_MIN = 150          # check-in, boarding, taxi to and from the airports
 FLIGHT_BASE_SAR = 250      # flight price per person = base + per km
 FLIGHT_PER_KM = 0.35
-FUEL_PRICE = 2.33          # SAR per litre (91 petrol)
-CAR_KM_PER_LITRE = 10
+FUEL_PRICES = {'91': 2.18, '95': 2.33}   # SAR per litre
+CAR_KM_PER_LITRE = 12      # used when a trip gives no value
 PEOPLE_PER_CAR = 4
 PEOPLE_PER_ROOM = 2
 DAY_END = 24 * 60          # midnight, in minutes
@@ -63,32 +65,66 @@ def trip_days(start_date, end_date):
 class TripPlanner:
     """Works out travel, cost and the checks of one trip."""
 
-    def __init__(self, trip, activities):
+    def __init__(self, trip, activities, router=None):
         # trip: a dict of the trips table; activities: a list of dicts of the activities table
+        # router: a RoadRouter for real roads, or None for the estimate only
         self.trip = trip
+        self.router = router
+        self.recording = None      # a list while the legs of the trip are being collected
+        self.kmpl = float(trip.get('car_kmpl') or CAR_KM_PER_LITRE)
+        self.fuel_price = FUEL_PRICES.get(str(trip.get('fuel') or '91'), FUEL_PRICES['91'])
         self.activities = activities
         self.people = int(trip['people'])
         self.cars = math.ceil(self.people / PEOPLE_PER_CAR)
         self.rooms = math.ceil(self.people / PEOPLE_PER_ROOM)
         self.allow_flights = trip['transport'] == 'flight'
         self.home = CITIES[trip['home_city']]
+        # the cities where the group has a house or family, so a night there costs nothing
+        self.stays = {c.strip() for c in (trip.get('stays') or '').split(',') if c.strip()}
 
     def leg(self, lat1, lng1, lat2, lng2):
-        """One move between two points: km, minutes, mode and cost for the group."""
+        """One move between two points: km, minutes, mode, cost for the group and the shape for the map."""
+        straight = [(lat1, lng1), (lat2, lng2)]
         km = haversine_km(lat1, lng1, lat2, lng2) * ROAD_FACTOR
         if km < 0.3:
-            return {'km': 0.0, 'minutes': 0, 'mode': 'walk', 'cost': 0.0}
+            return {'km': 0.0, 'minutes': 0, 'mode': 'walk', 'cost': 0.0, 'source': 'road', 'geometry': straight}
         if km >= FLIGHT_FROM_KM and self.allow_flights:
             price = (FLIGHT_BASE_SAR + FLIGHT_PER_KM * km) * self.people
-            return {'km': round(km, 1), 'minutes': FLIGHT_AIR_MIN + AIRPORT_MIN,
-                    'mode': 'flight', 'cost': round(price, 2)}
-        speed = CITY_SPEED if km < CITY_LIMIT_KM else HIGHWAY_SPEED
-        minutes = round(km / speed * 60) + PARKING_MIN
-        fuel = km / CAR_KM_PER_LITRE * FUEL_PRICE * self.cars
-        return {'km': round(km, 1), 'minutes': minutes, 'mode': 'car', 'cost': round(fuel, 2)}
+            return {'km': round(km, 1), 'minutes': FLIGHT_AIR_MIN + AIRPORT_MIN, 'mode': 'flight',
+                    'cost': round(price, 2), 'source': 'estimate', 'geometry': straight}
+        road = None
+        if self.recording is not None:
+            # first pass: only remember which legs the trip needs
+            self.recording.append((lat1, lng1, lat2, lng2))
+        elif self.router is not None:
+            road = self.router.road(lat1, lng1, lat2, lng2)
+        if road:
+            # the real road from OSRM, plus traffic and parking
+            km = road['km']
+            traffic = CITY_TRAFFIC if km < CITY_LIMIT_KM else HIGHWAY_TRAFFIC
+            minutes = round(road['minutes'] * traffic) + PARKING_MIN
+            source, shape = 'road', road['geometry']
+        else:
+            # no road service: the estimate from the straight line
+            speed = CITY_SPEED if km < CITY_LIMIT_KM else HIGHWAY_SPEED
+            minutes = round(km / speed * 60) + PARKING_MIN
+            source, shape = 'estimate', straight
+        # fuel for every car: km / (km per litre) x price per litre
+        fuel = km / self.kmpl * self.fuel_price * self.cars
+        return {'km': round(km, 1), 'minutes': minutes, 'mode': 'car', 'cost': round(fuel, 2),
+                'source': source, 'geometry': shape}
 
     def analyse(self):
         """The full picture of the trip: the days, the budget and the checks."""
+        if self.router is not None and self.router.online():
+            # pass 1 collects the legs, the router gets them all at once with threads, pass 2 uses them
+            self.recording = []
+            self.work_out()
+            pairs, self.recording = self.recording, None
+            self.router.prefetch(pairs)
+        return self.work_out()
+
+    def work_out(self):
         dates = trip_days(self.trip['start_date'], self.trip['end_date'])
         # the activities of each date, sorted by start time
         by_date = {day: [] for day in dates}
@@ -174,15 +210,25 @@ class TripPlanner:
                 here = {'lat': activity['lat'], 'lng': activity['lng'], 'name': activity['name'],
                         'city': activity['city']}
 
-            # the night: a hotel when the day ends away from the home city
+            # the night: at home, at your own place (free), or in a hotel
             hotel = None
-            if number < len(dates) - 1 and here['city'] != self.trip['home_city']:
-                price = CITIES[here['city']]['hotel'] * self.rooms
-                costs['hotels'] += price
-                day_cost += price
-                hotel = {'city': here['city'], 'rooms': self.rooms, 'cost': price}
-                here = {'lat': CITIES[here['city']]['lat'], 'lng': CITIES[here['city']]['lng'],
-                        'name': 'Hotel (' + here['city'] + ')', 'city': here['city']}
+            if number < len(dates) - 1:
+                city = here['city']
+                centre = CITIES[city]
+                if city == self.trip['home_city']:
+                    # sleep at home; the next day starts from home
+                    here = {'lat': centre['lat'], 'lng': centre['lng'], 'name': 'Home (' + city + ')', 'city': city}
+                elif city in self.stays:
+                    # a house or family in this city: no hotel to pay
+                    hotel = {'city': city, 'rooms': 0, 'cost': 0, 'own': True}
+                    here = {'lat': centre['lat'], 'lng': centre['lng'], 'name': 'Your place (' + city + ')',
+                            'city': city}
+                else:
+                    price = centre['hotel'] * self.rooms
+                    costs['hotels'] += price
+                    day_cost += price
+                    hotel = {'city': city, 'rooms': self.rooms, 'cost': price, 'own': False}
+                    here = {'lat': centre['lat'], 'lng': centre['lng'], 'name': 'Hotel (' + city + ')', 'city': city}
 
             # the last day ends with the way back home
             if number == len(dates) - 1:
@@ -289,3 +335,25 @@ def local_plan(trip, places, interests, pace='normal'):
             first = False
             count += 1
     return plan
+
+
+def fit_times(trip, activities, router=None):
+    """Moves start times later where the real travel time does not fit (used after every automatic plan).
+
+    The activities are changed in place: an activity that cannot be reached in time starts at the next
+    quarter hour after the arrival.
+    """
+    analysis = TripPlanner(trip, activities, router).analyse()
+    for day in analysis['days']:
+        clock = None
+        for item in day['items']:
+            activity = item['activity']
+            start = to_minutes(activity['start_time'])
+            if clock is not None:
+                arrive = clock + item['travel']['minutes']
+                if arrive > start:
+                    start = (arrive + 14) // 15 * 15
+                    if start < DAY_END:
+                        activity['start_time'] = to_clock(start)
+            clock = start + int(activity['duration_min'])
+    return activities

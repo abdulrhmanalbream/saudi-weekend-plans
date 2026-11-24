@@ -6,7 +6,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from planner import TripPlanner, haversine_km, local_plan, to_clock, to_minutes, trip_days  # noqa: E402
+from planner import TripPlanner, fit_times, haversine_km, local_plan, to_clock, to_minutes, trip_days  # noqa: E402
 from places_data import CITIES, PLACES  # noqa: E402
 
 COLUMNS = ['name', 'city', 'category', 'lat', 'lng', 'cost', 'duration_min', 'opens', 'closes', 'description']
@@ -123,6 +123,53 @@ class TestAnalysis(unittest.TestCase):
     def test_actual_cost_is_summed(self):
         acts = [activity(5, '2026-12-03', '10:00', actual_cost=35), activity(1, '2026-12-04', '16:00', actual_cost=210)]
         self.assertEqual(TripPlanner(trip(), acts).analyse()['budget']['actual'], 245)
+
+
+class TestStaysAndCars(unittest.TestCase):
+    def test_free_stay_has_no_hotel(self):
+        acts = [activity(9, '2026-12-03', '16:00'), activity(10, '2026-12-04', '17:00')]
+        result = TripPlanner(trip(destinations='Jeddah', transport='flight', stays='Jeddah'), acts).analyse()
+        self.assertTrue(result['days'][0]['hotel']['own'])
+        self.assertEqual(result['budget']['hotels'], 0)
+
+    def test_next_day_starts_from_your_place(self):
+        acts = [activity(9, '2026-12-03', '16:00'), activity(10, '2026-12-04', '17:00')]
+        result = TripPlanner(trip(destinations='Jeddah', transport='flight', stays='Jeddah'), acts).analyse()
+        self.assertEqual(result['days'][1]['items'][0]['from'], 'Your place (Jeddah)')
+
+    def test_economical_car_uses_less_fuel(self):
+        r, d = CITIES['Riyadh'], CITIES['Jeddah']
+        thirsty = TripPlanner(trip(car_kmpl=8), []).leg(r['lat'], r['lng'], d['lat'], d['lng'])
+        saver = TripPlanner(trip(car_kmpl=20), []).leg(r['lat'], r['lng'], d['lat'], d['lng'])
+        self.assertAlmostEqual(thirsty['cost'] / saver['cost'], 20 / 8, places=2)
+
+    def test_road_from_router_is_used(self):
+        class FakeRouter:
+            def online(self):
+                return True
+
+            def prefetch(self, pairs):
+                self.pairs = pairs
+
+            def road(self, *points):
+                return {'km': 30.0, 'minutes': 20.0, 'geometry': [(1, 2), (3, 4), (5, 6)]}
+        router = FakeRouter()
+        move = TripPlanner(trip(), [], router).leg(24.7336, 46.5753, 24.6476, 46.7106)
+        self.assertEqual(move['source'], 'road')
+        self.assertEqual(move['km'], 30.0)
+        self.assertEqual(move['minutes'], round(20 * 1.25) + 10)
+        self.assertEqual(len(move['geometry']), 3)
+
+
+class TestFitTimes(unittest.TestCase):
+    def test_late_start_is_moved(self):
+        # the museum starts 5 minutes after the sky bridge ends: not enough time to drive
+        acts = [activity(4, '2026-12-03', '10:00'), activity(5, '2026-12-03', '11:05'),
+                activity(1, '2026-12-04', '16:00')]
+        self.assertGreater(TripPlanner(trip(), acts).analyse()['conflicts'], 0)
+        fit_times(trip(), acts)
+        self.assertEqual(TripPlanner(trip(), acts).analyse()['conflicts'], 0)
+        self.assertEqual(to_minutes(acts[1]['start_time']) % 15, 0)
 
 
 class TestLocalPlanner(unittest.TestCase):
