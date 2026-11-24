@@ -9,13 +9,17 @@ from flask import Flask, g, request
 from ai_planner import AIError, GeminiPlanner
 from database import Database
 from places_data import CATEGORIES, CITIES
-from planner import FUEL_PRICES, TripPlanner, fit_times, local_plan, to_minutes, trip_days
+from planner import FUEL_PRICES, TripPlanner, fit_times, haversine_km, local_plan, to_minutes, trip_days
 from routing import RoadRouter
 from security import LoginLimiter, check_password, hash_password, new_token
 
 MAX_DAYS = 7
 MAX_PEOPLE = 20
 MAX_BUDGET = 500_000
+# the kinds of saved places; a night at any of them is free
+PLACE_KINDS = ['Home', 'Family', 'Friends']
+# a saved place must be this close to one of the cities of the planner
+CITY_RADIUS_KM = 80
 
 app = Flask(__name__)
 db = Database()
@@ -190,7 +194,7 @@ def check_activity(form, trip):
 def full_trip(trip):
     """The trip with its activities and the analysis of the planner."""
     activities = db.activities(trip['id'])
-    return {'trip': trip, 'activities': activities, 'analysis': TripPlanner(trip, activities, router).analyse()}
+    return {'trip': trip, 'activities': activities, 'analysis': TripPlanner(trip, activities, router, db.homes(g.user['id'])).analyse()}
 
 
 def items_from_plan(plan):
@@ -274,9 +278,10 @@ def places():
 def list_trips():
     # the JSON route of the saved records; the report helper uses it too
     trips = db.trips(g.user['id'])
+    homes = db.homes(g.user['id'])
     result = []
     for trip in trips:
-        analysis = TripPlanner(trip, db.activities(trip['id']), saved_roads).analyse()
+        analysis = TripPlanner(trip, db.activities(trip['id']), saved_roads, homes).analyse()
         result.append(dict(trip, status=analysis['status'], total=analysis['budget']['total'],
                            conflicts=analysis['conflicts']))
     return {'trips': result, 'count': len(result)}
@@ -384,17 +389,63 @@ def autoplan(trip_id):
     elif use_ai:
         summary = 'No GEMINI_API_KEY in .env. Planned by the local planner instead.'
     if plan is None:
-        plan = local_plan(trip, places, interests, pace)
+        plan = local_plan(trip, places, interests, pace, db.homes(g.user['id']))
     if not plan:
         return error('No place fits these dates and cities.')
 
     # replace the old activities with the new plan
     # move the starts later where the real road takes longer than planned
-    items = fit_times(trip, items_from_plan(plan), router)
+    items = fit_times(trip, items_from_plan(plan), router, db.homes(g.user['id']))
     db.clear_activities(trip_id)
     db.add_activities(trip_id, items)
     return dict(full_trip(trip), message='Plan ready (%s): %d activities.' % (source, len(plan)),
                 source=source, summary=summary)
+
+
+# ---------------------------------------------------------------- saved places: home, family, friends
+def nearest_city(lat, lng):
+    """The planner city closest to a point, or None when the point is far from all of them."""
+    city = min(CITIES, key=lambda c: haversine_km(lat, lng, CITIES[c]['lat'], CITIES[c]['lng']))
+    if haversine_km(lat, lng, CITIES[city]['lat'], CITIES[city]['lng']) > CITY_RADIUS_KM:
+        return None
+    return city
+
+
+@app.route('/my-places')
+@login_required
+def my_places():
+    return {'places': db.saved_places(g.user['id']), 'kinds': PLACE_KINDS}
+
+
+@app.route('/my-places/add', methods=['POST'])
+@login_required
+def add_my_place():
+    name = request.form.get('name', '').strip()
+    kind = request.form.get('kind', '').strip()
+    if not name:
+        return error('Give the place a name, for example Home or Ahmed’s house.')
+    if len(name) > 40:
+        return error('The name must be 40 characters or fewer.')
+    if kind not in PLACE_KINDS:
+        return error('The kind must be Home, Family or Friends.')
+    try:
+        lat = float(request.form.get('lat', ''))
+        lng = float(request.form.get('lng', ''))
+    except ValueError:
+        return error('Click on the map to choose the place.')
+    city = nearest_city(lat, lng)
+    if city is None:
+        return error('This point is more than %d km from the cities of the planner.' % CITY_RADIUS_KM)
+    place_id = db.add_saved_place(g.user['id'], name, kind, city, round(lat, 6), round(lng, 6))
+    return {'message': 'Saved %s in %s.' % (name, city), 'id': place_id, 'places': db.saved_places(g.user['id'])}
+
+
+@app.route('/my-places/delete/<int:place_id>', methods=['POST'])
+@login_required
+def delete_my_place(place_id):
+    if db.delete_saved_place(g.user['id'], place_id) == 0:
+        return error('No saved place has the id %d.' % place_id, 404)
+    return {'message': 'Place removed.', 'places': db.saved_places(g.user['id'])}
 
 
 @app.errorhandler(404)

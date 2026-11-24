@@ -91,6 +91,15 @@ class ApiClient:
     def delete_activity(self, activity_id):
         return self.send('/activities/delete/%d' % activity_id, {})
 
+    def my_places(self):
+        return self.send('/my-places')
+
+    def add_my_place(self, name, kind, lat, lng):
+        return self.send('/my-places/add', {'name': name, 'kind': kind, 'lat': lat, 'lng': lng})
+
+    def delete_my_place(self, place_id):
+        return self.send('/my-places/delete/%d' % place_id, {})
+
     def autoplan(self, trip_id, interests, pace, engine):
         # Gemini can take a while, so this request waits longer
         return self.send('/trips/%d/autoplan' % trip_id,

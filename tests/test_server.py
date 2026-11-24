@@ -118,6 +118,31 @@ class TestTrips(ServerTest):
         self.assertEqual(self.new_trip(headers, fuel='98').status_code, 400)
         self.assertEqual(self.new_trip(headers, stays='Paris').status_code, 400)
 
+    def test_saved_places(self):
+        headers = self.login()
+        reply = self.client.post('/my-places/add', headers=headers,
+                                 data={'name': 'Home', 'kind': 'Home', 'lat': '21.6', 'lng': '39.15'})
+        self.assertEqual(reply.status_code, 200)
+        self.assertEqual(reply.json['places'][0]['city'], 'Jeddah')
+        far = self.client.post('/my-places/add', headers=headers,
+                               data={'name': 'Desert', 'kind': 'Home', 'lat': '19.0', 'lng': '48.0'})
+        self.assertEqual(far.status_code, 400)
+        bad = self.client.post('/my-places/add', headers=headers,
+                               data={'name': 'X', 'kind': 'Boss', 'lat': '21.6', 'lng': '39.15'})
+        self.assertEqual(bad.status_code, 400)
+        place_id = reply.json['id']
+        other = self.login('omar')
+        self.assertEqual(self.client.post('/my-places/delete/%d' % place_id, headers=other).status_code, 404)
+        self.assertEqual(self.client.post('/my-places/delete/%d' % place_id, headers=headers).status_code, 200)
+
+    def test_trip_starts_from_saved_home(self):
+        headers = self.login()
+        self.client.post('/my-places/add', headers=headers,
+                         data={'name': 'My house', 'kind': 'Home', 'lat': '24.80', 'lng': '46.70'})
+        trip = self.new_trip(headers).json
+        self.assertEqual(trip['analysis']['home']['name'], 'My house')
+        self.assertAlmostEqual(trip['analysis']['home']['lat'], 24.80)
+
     def test_unknown_trip_is_404(self):
         headers = self.login()
         self.assertEqual(self.client.get('/trips/999', headers=headers).status_code, 404)

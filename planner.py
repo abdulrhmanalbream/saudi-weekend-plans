@@ -65,10 +65,12 @@ def trip_days(start_date, end_date):
 class TripPlanner:
     """Works out travel, cost and the checks of one trip."""
 
-    def __init__(self, trip, activities, router=None):
+    def __init__(self, trip, activities, router=None, homes=None):
         # trip: a dict of the trips table; activities: a list of dicts of the activities table
         # router: a RoadRouter for real roads, or None for the estimate only
+        # homes: the user's saved places, {city: {'name', 'lat', 'lng'}}; without one, the city centre is used
         self.trip = trip
+        self.homes = homes or {}
         self.router = router
         self.recording = None      # a list while the legs of the trip are being collected
         self.kmpl = float(trip.get('car_kmpl') or CAR_KM_PER_LITRE)
@@ -78,9 +80,22 @@ class TripPlanner:
         self.cars = math.ceil(self.people / PEOPLE_PER_CAR)
         self.rooms = math.ceil(self.people / PEOPLE_PER_ROOM)
         self.allow_flights = trip['transport'] == 'flight'
-        self.home = CITIES[trip['home_city']]
+        self.home = self.point(trip['home_city'], home_only=True)
+        if not self.home['saved']:
+            self.home['name'] = 'Home (' + trip['home_city'] + ')'
         # the cities where the group has a house or family, so a night there costs nothing
         self.stays = {c.strip() for c in (trip.get('stays') or '').split(',') if c.strip()}
+
+    def point(self, city, home_only=False):
+        """Where the group sleeps in a city: the saved place there, or the city centre.
+
+        The start and the end of a trip use only a place of the kind Home.
+        """
+        if city in self.homes and (not home_only or self.homes[city].get('kind', 'Home') == 'Home'):
+            home = self.homes[city]
+            return {'lat': home['lat'], 'lng': home['lng'], 'name': home['name'], 'saved': True}
+        centre = CITIES[city]
+        return {'lat': centre['lat'], 'lng': centre['lng'], 'name': city + ' centre', 'saved': False}
 
     def leg(self, lat1, lng1, lat2, lng2):
         """One move between two points: km, minutes, mode, cost for the group and the shape for the map."""
@@ -146,7 +161,7 @@ class TripPlanner:
         actual_count = 0
         total_km = 0.0
         # day 1 starts at home
-        here = {'lat': self.home['lat'], 'lng': self.home['lng'], 'name': 'Home (' + self.trip['home_city'] + ')',
+        here = {'lat': self.home['lat'], 'lng': self.home['lng'], 'name': self.home['name'],
                 'city': self.trip['home_city']}
         return_leg = None
 
@@ -210,24 +225,27 @@ class TripPlanner:
                 here = {'lat': activity['lat'], 'lng': activity['lng'], 'name': activity['name'],
                         'city': activity['city']}
 
-            # the night: at home, at your own place (free), or in a hotel
+            # the night: at home, at a free place (own house, family or friends), or in a hotel
             hotel = None
             if number < len(dates) - 1:
                 city = here['city']
-                centre = CITIES[city]
+                spot = self.point(city)
                 if city == self.trip['home_city']:
                     # sleep at home; the next day starts from home
-                    here = {'lat': centre['lat'], 'lng': centre['lng'], 'name': 'Home (' + city + ')', 'city': city}
-                elif city in self.stays:
-                    # a house or family in this city: no hotel to pay
-                    hotel = {'city': city, 'rooms': 0, 'cost': 0, 'own': True}
-                    here = {'lat': centre['lat'], 'lng': centre['lng'], 'name': 'Your place (' + city + ')',
-                            'city': city}
+                    here = {'lat': self.home['lat'], 'lng': self.home['lng'], 'name': self.home['name'], 'city': city}
+                elif city in self.stays or spot['saved']:
+                    # a saved place or a ticked city: no hotel to pay
+                    name = spot['name'] if spot['saved'] else 'Your place (' + city + ')'
+                    hotel = {'city': city, 'rooms': 0, 'cost': 0, 'own': True, 'place': name,
+                             'lat': spot['lat'], 'lng': spot['lng']}
+                    here = {'lat': spot['lat'], 'lng': spot['lng'], 'name': name, 'city': city}
                 else:
+                    centre = CITIES[city]
                     price = centre['hotel'] * self.rooms
                     costs['hotels'] += price
                     day_cost += price
-                    hotel = {'city': city, 'rooms': self.rooms, 'cost': price, 'own': False}
+                    hotel = {'city': city, 'rooms': self.rooms, 'cost': price, 'own': False,
+                             'lat': centre['lat'], 'lng': centre['lng']}
                     here = {'lat': centre['lat'], 'lng': centre['lng'], 'name': 'Hotel (' + city + ')', 'city': city}
 
             # the last day ends with the way back home
@@ -265,6 +283,7 @@ class TripPlanner:
         complete = all(check['ok'] for check in checks)
 
         return {
+            'home': self.home,
             'days': days,
             'return_leg': return_leg,
             'budget': {'activities': round(costs['activities'], 2), 'fuel': round(costs['fuel'], 2),
@@ -280,18 +299,18 @@ class TripPlanner:
         }
 
 
-def local_plan(trip, places, interests, pace='normal'):
+def local_plan(trip, places, interests, pace='normal', homes=None):
     """A plan made without AI: fills each day with nearby places that match the interests.
 
     It is the fallback when Gemini is not available, and it uses the same travel rules.
     """
-    planner = TripPlanner(trip, [])
+    planner = TripPlanner(trip, [], homes=homes)
     dates = trip_days(trip['start_date'], trip['end_date'])
     cities = [c.strip() for c in trip['destinations'].split(',') if c.strip()] or [trip['home_city']]
     per_day = {'relaxed': 3, 'normal': 4, 'packed': 6}.get(pace, 4)
     used = set()
     plan = []
-    here = (CITIES[trip['home_city']]['lat'], CITIES[trip['home_city']]['lng'])
+    here = (planner.home['lat'], planner.home['lng'])
     # spread the destination cities over the days, in order
     day_city = [cities[min(n * len(cities) // len(dates), len(cities) - 1)] for n in range(len(dates))]
     for number, day in enumerate(dates):
@@ -321,8 +340,7 @@ def local_plan(trip, places, interests, pace='normal'):
                 continue
             if number == len(dates) - 1:
                 # the last day must leave time to get home before midnight
-                back = planner.leg(best['lat'], best['lng'], CITIES[trip['home_city']]['lat'],
-                                   CITIES[trip['home_city']]['lng'])
+                back = planner.leg(best['lat'], best['lng'], planner.home['lat'], planner.home['lng'])
                 if end + back['minutes'] > 23 * 60 + 30:
                     continue
             # round the start up to the next quarter hour
@@ -337,13 +355,13 @@ def local_plan(trip, places, interests, pace='normal'):
     return plan
 
 
-def fit_times(trip, activities, router=None):
+def fit_times(trip, activities, router=None, homes=None):
     """Moves start times later where the real travel time does not fit (used after every automatic plan).
 
     The activities are changed in place: an activity that cannot be reached in time starts at the next
     quarter hour after the arrival.
     """
-    analysis = TripPlanner(trip, activities, router).analyse()
+    analysis = TripPlanner(trip, activities, router, homes).analyse()
     for day in analysis['days']:
         clock = None
         for item in day['items']:

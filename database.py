@@ -53,6 +53,14 @@ SCHEMA = [
         actual_cost REAL,
         opens TEXT NOT NULL, closes TEXT NOT NULL,
         notes TEXT)''',
+    '''CREATE TABLE IF NOT EXISTS saved_places (
+        id INTEGER PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        city TEXT NOT NULL,
+        lat REAL NOT NULL,
+        lng REAL NOT NULL)''',
     '''CREATE TABLE IF NOT EXISTS route_cache (
         leg TEXT PRIMARY KEY,
         km REAL NOT NULL,
@@ -155,6 +163,27 @@ class Database:
 
     def place(self, place_id):
         return self.row('SELECT * FROM places WHERE id = ?', (place_id,))
+
+    # ---- the user's own places: home, family and friends
+    def saved_places(self, user_id):
+        return self.rows('SELECT * FROM saved_places WHERE user_id = ? ORDER BY city, kind, name', (user_id,))
+
+    def add_saved_place(self, user_id, name, kind, city, lat, lng):
+        sql = 'INSERT INTO saved_places (user_id, name, kind, city, lat, lng) VALUES (?, ?, ?, ?, ?, ?)'
+        return self.run(sql, (user_id, name, kind, city, lat, lng)).lastrowid
+
+    def delete_saved_place(self, user_id, place_id):
+        return self.run('DELETE FROM saved_places WHERE id = ? AND user_id = ?', (place_id, user_id)).rowcount
+
+    def homes(self, user_id):
+        """One place per city for the planner: Home first, then Family, then Friends."""
+        order = {'Home': 0, 'Family': 1, 'Friends': 2}
+        best = {}
+        for place in self.saved_places(user_id):
+            old = best.get(place['city'])
+            if old is None or order[place['kind']] < order[old['kind']]:
+                best[place['city']] = place
+        return best
 
     # ---- the saved roads from OSRM
     def cached_route(self, key):

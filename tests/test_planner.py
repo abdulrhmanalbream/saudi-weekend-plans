@@ -137,6 +137,20 @@ class TestStaysAndCars(unittest.TestCase):
         result = TripPlanner(trip(destinations='Jeddah', transport='flight', stays='Jeddah'), acts).analyse()
         self.assertEqual(result['days'][1]['items'][0]['from'], 'Your place (Jeddah)')
 
+    def test_friends_house_is_a_free_night_at_its_pin(self):
+        homes = {'Jeddah': {'name': 'Ahmed (friends)', 'lat': 21.60, 'lng': 39.14}}
+        acts = [activity(9, '2026-12-03', '16:00'), activity(10, '2026-12-04', '17:00')]
+        result = TripPlanner(trip(destinations='Jeddah', transport='flight'), acts, homes=homes).analyse()
+        night = result['days'][0]['hotel']
+        self.assertTrue(night['own'])
+        self.assertEqual(night['place'], 'Ahmed (friends)')
+        self.assertEqual(result['days'][1]['items'][0]['from'], 'Ahmed (friends)')
+
+    def test_friends_house_is_not_the_start(self):
+        homes = {'Riyadh': {'name': 'Omar (friends)', 'kind': 'Friends', 'lat': 24.80, 'lng': 46.70}}
+        result = TripPlanner(trip(), [activity(5, '2026-12-03', '10:00')], homes=homes).analyse()
+        self.assertEqual(result['home']['name'], 'Home (Riyadh)')
+
     def test_economical_car_uses_less_fuel(self):
         r, d = CITIES['Riyadh'], CITIES['Jeddah']
         thirsty = TripPlanner(trip(car_kmpl=8), []).leg(r['lat'], r['lng'], d['lat'], d['lng'])
